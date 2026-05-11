@@ -35,6 +35,26 @@ A full security review was performed across the container stack, covering CVE sc
 
 #### pathfinder (submodule)
 
+**A6: tighten log/tmp directory permissions**
+- `pathfinder.Dockerfile`: `chmod 0766` → `chmod 0755` on `pathfinder/logs` and `pathfinder/tmp/` — removes world-write bit; PHP (running as `nobody`, directory owner) retains full write access.
+
+**SSO: cache CCP JWKS in F3 to avoid per-login fetch (A1)**
+- `app/Controller/Ccp/Sso.php`: `VolatileRuntimeStorage` (in-memory PHP array) was the Guzzle cache backend — reset every request, so JWKS was always fetched from CCP on each login callback. Added `getCcpJwkData()` F3 cache layer (1h TTL via Redis in production). On `kid`-invalid exception (CCP key rotation), cache is busted and JWKS re-fetched once automatically.
+
+**SSO: remove dead code in getSsoAccessData (F7)**
+- `app/Controller/Ccp/Sso.php`: Removed unreachable `else` branch (caller always passes non-empty `$authCode`). Simplified to a one-line passthrough to `verifyAuthorizationCode()`.
+
+**SSO / cookie auth: replace deprecated CSPRNG (F4)**
+- `app/Controller/Ccp/Sso.php`: `openssl_random_pseudo_bytes(12)` → `random_bytes(32)` for OAuth `state` (entropy bump: 96 → 256 bits).
+- `app/Controller/Controller.php`: Both `openssl_random_pseudo_bytes` calls in cookie selector/validator generation replaced with `random_bytes`. Removed redundant `openssl_cipher_iv_length()` intermediate.
+
+**SSO: refresh token redaction from logs (F3)**
+- `app/Controller/Ccp/Sso.php`: Added `redactSecrets()` helper that masks `refresh_token`, `code`, and `client_secret` before logging. Applied to the `requestAccessData()` failure path where `print_r($requestParams)` previously exposed long-lived tokens to log files.
+
+**SSO: JWT issuer and audience verification (F1 + F2)**
+- `app/Controller/Ccp/Sso.php`: Fixed broken issuer check (`strpos() !== true` was always-true; replaced with `hash_equals`). Added missing audience (`aud`) and optional authorized-party (`azp`) verification against `CCP_SSO_CLIENT_ID`. Both checks now throw `UnexpectedValueException` on mismatch. `verifyCharacterData()` wraps the full verification in try/catch, returns `null` on any failure (caller `!empty()` guards trigger correctly instead of 500).
+
+
 **Session fixation**
 - `app/Controller/Api/User.php`: `session_regenerate_id(true)` called in `loginByCharacter()` after session data is written — prevents session fixation via pre-planted session cookie
 
