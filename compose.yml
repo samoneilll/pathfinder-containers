@@ -27,7 +27,9 @@ services:
     restart: always
 
   pf-socket:
-    image: ghcr.io/goryn-clade/pf-websocket:latest
+    build:
+      context: .
+      dockerfile: pf-websocket.Dockerfile
     command: ["--tcpHost", "0.0.0.0"]
     env_file:
       - .env
@@ -39,16 +41,22 @@ services:
 
   pf:
     container_name: pathfinder
-    image: ghcr.io/goryn-clade/pathfinder:latest
+    build:
+      context: .
+      dockerfile: pathfinder.Dockerfile
     env_file:
       - .env
     labels:
       - traefik.enable=true
+      - traefik.docker.network=traefik
       - traefik.http.services.pf.loadbalancer.server.port=80
-      - traefik.http.routers.pf-secure.rule=Host(`${DOMAIN}`)
-      - traefik.http.routers.pf-secure.entrypoints=websecure
-      - traefik.http.routers.pf-secure.tls=true
-      - traefik.http.routers.pf-secure.tls.certresolver=letsencrypt
+      - traefik.http.routers.pf.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.pf.entrypoints=websecure
+      - traefik.http.routers.pf.tls=true
+      - traefik.http.routers.pf.tls.certresolver=letsencrypt
+    networks:
+      - default
+      - traefik
     healthcheck:
       disable: true
     volumes:
@@ -62,31 +70,11 @@ services:
       - pf-socket
     restart: always
 
-  traefik:
-    image: traefik:v3.6.1
-    container_name: traefik
-    command:
-      - "--log.level=INFO"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
-      - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
-      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
-      - "--certificatesresolvers.letsencrypt.acme.email=${LE_EMAIL}"
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./letsencrypt:/letsencrypt
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-    restart: always
-
 volumes:
   db_data:
   redis_data:
+
+networks:
+  default:
+  traefik:
+    external: true
