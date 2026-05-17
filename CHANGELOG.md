@@ -2,6 +2,28 @@
 
 ## v3.0
 
+### Session, cookie & CSRF audit (PKG 4 audit)
+
+- Full audit of PHP session cookie attributes, remember-me cookie hardening, CSRF posture, logout flow, SSO state validation, session regeneration, and concurrent-session policy
+- No HIGH findings; 2 MEDIUM findings fixed
+- Findings doc: `.claude/AUDIT-PKG-4-session-cookie-csrf-findings.md`
+- `pathfinder/app/Model/Pathfinder/CharacterModel.php`: on full logout (last character signed out), replace two SESSION sub-key clears with `f3->clear('SESSION')` — calls `session_unset()+session_destroy()` and expires the PHPSESSID cookie; previously the session record persisted in the sessions table after logout
+- `pathfinder/app/Controller/Controller.php`: when `deleteCookie=true`, expire the `char_*` remember-me browser cookie immediately after erasing the DB row; previously the cookie lingered in the browser until its 30-day TTL despite the DB row being gone
+
+### WS auth & realtime scoping audit (PKG 3 audit)
+
+- Full audit of HMAC validation, cross-character authorization, realtime data scoping, token lifecycle, origin allow-list, TCP bind, and connection/frame caps across all 8 investigation tasks
+- All tasks passed; no security defects found
+- Realtime authorization contract written: `.claude/AUDIT-PKG-3-realtime-authz-contract.md`
+- `websocket/cmd.php`: added comment clarifying Docker compose must override `tcpHost` to `0.0.0.0` for inter-container PHP→WS communication
+
+### Token leakage surfaces audit (PKG 2 audit)
+
+- Full audit of all ESI token read sites, logging paths, browser-facing surfaces, caches, sessions, WS server logs, and F3 debug output at DEBUG=3
+- Zero leaks found across all 7 investigation tasks
+- Token-flow contract written: `.claude/AUDIT-PKG-2-token-flow-contract.md`
+- No code changes required
+
 ### Token-at-rest fail-fast (PKG 1 audit)
 
 - `entrypoint.sh`: validate `TOKEN_ENCRYPTION_KEY` is present and exactly 64 hex chars before launching supervisord; container exits non-zero with a clear `FATAL:` message on misconfig instead of booting and silently breaking SSO at first user login
