@@ -2,6 +2,74 @@
 
 ## v3.0
 
+### Token-at-rest fail-fast (PKG 1 audit)
+
+- `entrypoint.sh`: validate `TOKEN_ENCRYPTION_KEY` is present and exactly 64 hex chars before launching supervisord; container exits non-zero with a clear `FATAL:` message on misconfig instead of booting and silently breaking SSO at first user login
+
+### WebSocket security hardening
+
+- `LogFileHandler`: restrict stream paths to `/var/www/html/pathfinder/history/map`; reject `..` traversal and out-of-root absolutes; drop world-writable `@chmod`
+- `cmd.php`: fail-fast at boot if `WS_TOKEN_SECRET` is absent or shorter than 32 hex chars
+- `WebSockets.php`: wrap `WsServer` in Ratchet `OriginCheck` using `WS_ALLOWED_ORIGINS` env var; production boot fails if empty; non-prod auto-allows localhost/127.0.0.1
+- `Payload::jsonSerialize()`: emit only `task` and `load`; suppress `characterIds` server-routing field from outbound WS frames
+- `AbstractMessageComponent`: reject new connections once 5000 are active; reject inbound frames over 64 KB before `json_decode`
+- `composer.json`: bump `cboden/ratchet` →0.4.4, `react/*` to latest 1.x, `clue/ndjson-react` →1.3, pin `react/promise: ^2.11`; `rfc6455` v0.3.1 unblocked `guzzlehttp/psr7` →2.x and `symfony/*` →6.4.x; replace removed `Promise\Timer\TimeoutException` with `\RuntimeException` in `TcpSocket`; bump Dockerfile base to `composer:2`
+
+### Return type completion + param types (Phase 2.X + 2.3)
+
+- Eliminated remaining 126 `missingType.return` entries: `void`/`never` for event hooks and exception throwers; `: mixed` for Cortex virtual field getters (`SystemModel::get_*`); fixed `Api/Map::import()/getAccessData()` early `return $value;` bail-outs → `return;`
+- Eliminated 77 `missingType.parameter` entries: `array` for F3 route handler `$params`, model `$data`/`$options`; `mixed` for Cortex virtual setters and `set_position()`; `Cron::__get()` typed `mixed` (contravariance with parent)
+- **Result:** `missingType.return` 0, `missingType.parameter` 0; baseline 1,264 → 876 unique entries (−388)
+
+### Iterable value type annotations (Phase 2.4)
+
+- Ran Rector `TypeDeclarationDocblocksLevel` rules across all PHP source to auto-infer `array<K,V>` PHPDoc annotations; 7 Rector-inferred types were too narrow and corrected to `array<string, mixed>`
+- Python bulk-annotation script applied `@param array<string, mixed>` / `@return array<string, mixed>` / `@var array<string, mixed>` across 131 files (449 total annotations)
+- Fixed script double-counting bug that placed 2 annotations outside docblocks (`AbstractWebhookHandler.php`, `MapUpdate.php`)
+- Fixed 13 `#[\Override]` placement errors (script inserted new docblock between attribute and function; merged into the pre-attribute docblock): `AbstractChannelLog`, `AbstractCharacterLog`, `AbstractMapTrackingModel`, `AbstractMapWebhookHandler`, `AbstractRallyWebhookHandler`, `LogCollection`, `MapLog`, `MapModel::getLogData`, `RallyLog`, `Setup::beforeroute`, `SocketHandler::handle`, `SystemModel::beforeUpdateEvent`, `SystemSignatureModel::beforeUpdateEvent`
+- Fixed class-level `@method`/`@property` tags: `CcpClient`, `EveScoutClient`, `GitHubClient` (`sendBatch $configs`), `Cron` (`$jobs`)
+- Fixed `Traversable` return types in `Search` (`getFilesByCallback/MTime/Size` → `Traversable<mixed, \SplFileInfo>`) and `SortingIterator::__construct` (`$iterator`)
+- Fixed remaining edge cases: `CharacterModel::AUTHORIZATION_STATUS` constant, `Controller::getEnvironmentData` union return, `Config::setAllEnvironmentData` (dropped spurious `|mixed`), `MapModel::getSystems/getConnections` (`array<array-key, mixed>|CortexCollection`), `AbstractModel::indexExists`, `Sql::exec`, `Payload::$characterIds`, `MapUpdate::receiveData`
+- **Result:** `missingType.iterableValue` 516 → 0; baseline 1,301 → 1,264 (−37)
+
+### Return types + PHP 8.3 modernisation (Phase 2.1–2.2)
+
+- `AbstractLog.$f3`: changed `null|\Base` → `\Base` (constructor always calls setF3())
+- `LogCollection.$collection`: changed `null|\SplObjectStorage` → `\SplObjectStorage` (constructor always initializes)
+- `AbstractModel.getFormattedColumn()`: added `: ?string` return type; fixed `strtotime()|false` → `int|null` for `date()`
+- Rector PHP 8.3 set applied across 99 files: `#[\Override]` on all overrides, typed class constants, anonymous catch blocks, `(string)` casts where needed
+- Rector TypeDeclaration rules applied: `void` return types on no-return methods, `bool`/`int`/`array` returns from strict return expressions, `?T` nullable return types, parent-based return type declarations
+- `ConnectionModel/CorporationMapModel/MapGroupModel::clearCacheData()`: added `: void`
+- **Result:** missingType.return 313 → 126 (−187); method.nonObject 39 → 29 (−10); total baseline 1584 → 1624 (+40 newly exposed by return type additions)
+
+### Connection type enums (Phase 1b)
+
+- `pathfinder/app/Enum/ConnectionType.php`: new PHP 8.1 backed string enum — 15 cases covering all valid `scope`/`type` column values; utility methods `whitelist()`, `eolCases()`, `jumpMassCases()`, `eolBaseSeconds()`; legacy `wh_eol` deliberately absent (callers map it to `WhEol1`)
+- `ConnectionModel`: removed `$connectionTypeWhitelist` static array; `getConnectionTypeWhitelist()` delegates to `ConnectionType::whitelist()`; all scope/type string literals replaced with enum values; `set_type()` validates via `ConnectionType::tryFrom()`
+- `Route.php`: EOL key→type map and scope/type filter literals → enum values
+- `AbstractEveScoutController.php`: EveScout EOL phase mapping, jump-mass mapping, and `scope` literal → enum values
+- `MapUpdate.php`: `$phaseBase` array replaced with `ConnectionType::eolCases()` + `eolBaseSeconds()`; `scope` SQL param literal → enum value
+- **Result:** baseline 1,597 → 1,596 unique entries (stale property entry removed)
+
+### F3 framework stubs (Phase 1a)
+
+- `stubs/f3/`: hand-written PHPStan stubs for `\Prefab`, `\Base`, `\Template`, `\Log`, `\Audit`, `\Cache`, `\DB\SQL`, `\DB\SQL\Schema`, `\DB\Cortex`, `\DB\CortexCollection`
+- `\Base` stub: `@method` declarations for all app-registered hive callables (ccpClient, ssoClient, gitHubClient, eveScoutClient, webSocket, getTimeZone, getDateTime); `@property` for $DB and $CACHE; concrete method signatures with typed array params
+- `\DB\Cortex` stub: `__get/__set/__isset/__unset` magic (ActiveRecord pattern); `find()` returns `CortexCollection|false` (not the PHPStan-inferred intersection type); intentionally preserves 2 real `string-given-not-array` bugs in filter params
+- `\DB\CortexCollection` stub: extends `\ArrayIterator<int, \DB\Cortex>` — eliminates `(CortexCollection&iterable<Model>)|false` intersection errors
+- `\DB\SQL\Schema` stub: all `DT_*`/`DF_*` constants + `TableBuilder`/`TableModifier`/`Column` class hierarchy
+- `phpstan.neon`: F3 vendor moved from `scanFiles` to `stubFiles`; Ratchet and Monolog remain in `scanFiles`
+- **Result:** baseline 1949 → 1822 absorbed errors, 1651 → 1597 unique entries (−127/−54)
+
+### Static analysis tooling restored (Phase 0)
+
+- `phpstan.neon` / `phpstan-baseline.neon`: PHPStan level 8, 1949-error baseline; `scanFiles` covers F3 core, Cortex, Ratchet, Monolog vendor
+- `.phpcs.xml`: PHPCompatibility ruleset targeting PHP 8.3+; excludes two pre-existing soft-reserved-keyword warnings (scope to fix separately)
+- `rector.php`: Rector configured for PHP 8.3 across `pathfinder/app` + `websocket/app`
+- `phpstan-bootstrap.php`: deprecation-suppressing bootstrap kept for reference
+- `pathfinder/composer.json`: added `require-dev` — phpstan, phpcs, phpcompatibility, rector; added `scripts` for `phpstan`, `phpstan-baseline`, `phpcs`, `rector`; `post-install-cmd` registers PHPCompatibility standard
+- `.github/workflows/static-analysis.yml`: CI runs PHPStan + PHPCS on every PR; fails on any new error not in baseline
+
 - `Setup.php` / `environment.ini`: gated `/setup` controller behind new `ENVIRONMENT.SETUP_ENABLED` flag (default `1` in DEVELOP, `0` in PRODUCTION). Returns 404 when disabled. Lets prod images keep the route file intact while still locking out the wizard post-bootstrap.
 
 ---
